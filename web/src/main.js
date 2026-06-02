@@ -5,10 +5,10 @@
 import { G } from "./state.js";
 import { FIXED_DT, MAX_SUBSTEPS } from "./config.js";
 import { engine } from "./physics.js";
-import { stepSim } from "./rules.js";
+import { stepSim, loadLevel, aliveChickens } from "./rules.js";
+import { LEVELS } from "./levels.js";
 import { render, setupCanvas } from "./render.js";
 import { updateHUD, showOverlay, overlay } from "./ui.js";
-import { loadLevel } from "./rules.js";
 // input.js registers its own event listeners on import.
 import "./input.js";
 
@@ -40,21 +40,34 @@ function loop(now) {
 }
 
 // ---- Boot -----------------------------------------------------------------
-function startGame() {
+function startGame(startIdx = 0) {
   G.started = true;
-  G.levelIndex = 0;
+  G.levelIndex = startIdx;
   G.score = 0;
   G.levelStartScore = 0;
   loadLevel(G.levelIndex);
   overlay.classList.add("hidden");
 }
 
-showOverlay(
-  "Angry Chickens 🐱",
-  "Drag the cat back on the slingshot and release to fling it at the chickens. Defeat them all to clear the level!",
-  "Play",
-  startGame
-);
+// Lightweight state accessor for automated tests / debugging.
+window.__game = () => ({
+  state: G.state, level: G.levelIndex, cats: G.remainingCats, score: G.score,
+  alive: aliveChickens(),
+  cat: G.cat ? { x: Math.round(G.cat.position.x), y: Math.round(G.cat.position.y) } : null,
+});
+
+// Optional deep-link: ?level=N jumps straight into level N (1-based).
+const startParam = parseInt(new URLSearchParams(location.search).get("level"), 10);
+if (Number.isInteger(startParam) && startParam >= 1 && startParam <= LEVELS.length) {
+  startGame(startParam - 1);
+} else {
+  showOverlay(
+    "Angry Chickens 🐱",
+    "Drag the cat back on the slingshot and release to fling it at the chickens. Defeat them all to clear the level!",
+    "Play",
+    () => startGame(0)
+  );
+}
 
 setupCanvas();
 updateHUD();
