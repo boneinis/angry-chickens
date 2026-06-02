@@ -1,7 +1,7 @@
 // ---- Input ----------------------------------------------------------------
 import { G } from "./state.js";
 import { W, H, SLING, MAX_STRETCH, CAT_R } from "./config.js";
-import { canvas } from "./render.js";
+import { canvas, getCamera } from "./render.js";
 import { hint } from "./ui.js";
 import { launch, activateAbility } from "./rules.js";
 
@@ -16,7 +16,14 @@ function toWorld(evt) {
   const rect = canvas.getBoundingClientRect();
   const cx = (evt.touches ? evt.touches[0].clientX : evt.clientX) - rect.left;
   const cy = (evt.touches ? evt.touches[0].clientY : evt.clientY) - rect.top;
-  return { x: cx * (W / rect.width), y: cy * (H / rect.height) };
+  // Map to the logical W×H space first...
+  const lx = cx * (W / rect.width);
+  const ly = cy * (H / rect.height);
+  // ...then invert the camera transform (scale about origin, then translate).
+  // During "ready"/"aiming" the camera is the identity so this is a no-op and
+  // aiming stays pixel-accurate; in flight it keeps ability taps correct.
+  const cam = getCamera();
+  return { x: lx / cam.zoom + cam.x, y: ly / cam.zoom + cam.y };
 }
 
 function screenPt(evt) {

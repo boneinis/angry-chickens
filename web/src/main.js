@@ -25,7 +25,14 @@ function loop(now) {
   last = now;
   if (G.started) {
     if (frame > 250) frame = 250;          // clamp after a tab was backgrounded
-    accumulator += frame;
+    // Slow-motion: tick the window down in real time, then scale how much
+    // simulated time we accumulate. The fixed step stays constant and stable;
+    // we simply feed it fewer steps per real second.
+    if (G.slowMoMs >= 0) {
+      G.slowMoMs -= frame;
+      if (G.slowMoMs <= 0) { G.slowMoMs = -1; G.timeScale = 1; }
+    }
+    accumulator += frame * (G.timeScale || 1);
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
       Engine.update(engine, FIXED_DT);

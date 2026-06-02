@@ -37,7 +37,25 @@ out before the coop is clear and it's game over.
 - **Stars and best scores are saved** in your browser (`localStorage`) and shown
   on each level tile; clearing a level unlocks the next.
 - Jump straight to a level with `?level=N` (1-based), e.g. `index.html?level=5`.
-- The **☰** button (top-right) opens Level Select and pauses the game.
+- The **☰** button (top-right) opens Level Select / pause; **Resume** returns
+  to play. A **Settings** screen (from the title) toggles SFX, sets music
+  volume, and can reset progress.
+
+## Cats, chickens & blocks
+
+- **Cat types with tap-to-activate powers** — tap mid-flight to trigger:
+  **speedy** (dash), **bomber** (explode), **splitter** (splits into pieces),
+  **heavy** (slam down). Each level has its own cat queue (shown on deck).
+- **Chicken variety** — **basic**, **helmet** (shrugs off debris; needs a
+  direct hit or an explosion), and **big**.
+- **Destructible materials** — **wood**, **ice** (shatters easily), and
+  **stone** (tough); structures crack and break apart, and debris can crush
+  chickens. Destroying blocks scores points.
+
+## Game feel
+
+Motion trails, squash/stretch, screen shake on big impacts, a brief slow-mo on
+the finishing blow, a follow camera, and procedural sound effects + music.
 
 ## Tech
 
@@ -53,9 +71,20 @@ out before the coop is clear and it's game over.
 
 ```
 web/
-├── index.html        # page shell + HUD overlay
-├── style.css         # layout, HUD, overlay styling
-├── game.js           # game loop, slingshot, physics, levels, scoring
+├── index.html        # page shell + HUD + overlay host
+├── style.css         # layout, HUD, screens, level-select grid
+├── src/              # ES modules (no build step)
+│   ├── main.js       # boot, fixed-timestep loop, deep-link, debug accessor
+│   ├── state.js      # the single mutable game-state object (G)
+│   ├── config.js     # tunables: physics, materials, cat/chicken types, camera
+│   ├── levels.js     # the 12 levels (schema v2)
+│   ├── physics.js    # Matter engine + body factories
+│   ├── rules.js      # screen flow, scoring/stars, collisions, abilities
+│   ├── render.js     # canvas drawing, camera, juice
+│   ├── input.js      # pointer aim/launch + ability tap
+│   ├── ui.js         # HUD + title/results/game-over/level-select/settings
+│   ├── audio.js      # procedural SFX + music
+│   └── save.js       # localStorage progress (unlocks, best score/stars)
 └── vendor/
     └── matter.min.js # Matter.js physics engine (pinned 0.20.0)
 ```

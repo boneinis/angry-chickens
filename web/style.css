@@ -170,6 +170,43 @@ html, body {
 .lvl-tile:disabled { cursor: not-allowed; background: #ececec; color: #bbb; box-shadow: inset 0 0 0 2px #ddd; }
 .lvl-tile.locked .num::after { content: " 🔒"; font-size: 0.7em; }
 
+/* title tagline */
+.ov-tag {
+  font-size: clamp(13px, 2.4vw, 18px);
+  font-weight: 700;
+  color: #f48c06;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* stacked button column (title menu) */
+.ov-btns-col { flex-direction: column; align-items: stretch; max-width: 280px; margin: 0 auto; }
+.ov-btns-col .btn { width: 100%; }
+
+/* settings */
+.settings { margin: 10px auto 18px; max-width: 360px; text-align: left; }
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+  font-size: clamp(14px, 2.6vw, 18px);
+  color: #333;
+  font-weight: 700;
+}
+.set-row:last-child { border-bottom: none; }
+.btn.toggle { padding: 8px 22px; font-size: clamp(13px, 2.4vw, 17px); }
+.set-row input[type="range"] {
+  flex: 1;
+  max-width: 180px;
+  accent-color: #e85d04;
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.6; cursor: default; transform: none; }
+
 #hint {
   position: absolute;
   bottom: 14px;

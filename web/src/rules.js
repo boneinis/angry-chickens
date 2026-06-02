@@ -6,11 +6,13 @@ import {
   CAT_TYPES, DEFAULT_CAT_TYPE,
   DASH_SPEED, SLAM_SPEED, SPLIT_COUNT, SPLIT_SPREAD, SPLIT_RADIUS_MUL,
   EXPLODE_RADIUS, EXPLODE_IMPULSE, CHICKEN_TYPES,
+  SLOWMO_MS, SLOWMO_SCALE,
 } from "./config.js";
 import { LEVELS } from "./levels.js";
 import {
   engine, world, makeBlock, makeChicken, makeCat, makeCatPiece, clearBodies,
 } from "./physics.js";
+import { shakeCamera } from "./render.js";
 import { sndLaunch, sndHit, sndThud, sndBreak } from "./audio.js";
 import { updateHUD, showResults, showGameOver, showMenu, showLevelSelect } from "./ui.js";
 import { recordResult, getBest } from "./save.js";
@@ -34,8 +36,21 @@ export function openMenu() {
 }
 
 export function openLevelSelect() {
+  // Offer Resume only when a level is actually mid-play (not on a menu/end
+  // screen). Resuming just unpauses and closes the overlay.
+  const playable = ["ready", "aiming", "flying", "between"].includes(G.state);
+  const wasStarted = G.started;
   G.started = false;                       // pause physics while choosing
-  showLevelSelect({ onSelect: startLevel, onBack: openMenu });
+  showLevelSelect({
+    onSelect: startLevel,
+    onBack: openMenu,
+    onResume: (playable && wasStarted) ? resumeLevel : null,
+  });
+}
+
+// Continue the current attempt after pausing via the level-select / menu.
+export function resumeLevel() {
+  G.started = true;
 }
 
 function computeStars(score, thresholds) {
@@ -57,6 +72,12 @@ export function loadLevel(idx) {
   G.abilityReady = false;
   G.particles = [];
   G.popups = [];
+  G.catTrail = [];
+  G.catSquashT = 0;
+  G.catLastSpeed = 0;
+  G.slowMoMs = -1;
+  G.timeScale = 1;
+  G.camera.shakeT = 0;
 
   const lvl = LEVELS[idx];
   lvl.blocks.forEach(makeBlock);
@@ -81,6 +102,9 @@ export function prepareCat() {
   G.catPieces = [];
   G.abilityReady = false;       // only armed once launched
   G.dragPoint = null;
+  G.catTrail = [];              // clear juice carryover from the previous cat
+  G.catSquashT = 0;
+  G.catLastSpeed = 0;
   G.state = "ready";
 }
 
@@ -101,6 +125,11 @@ export function launch() {
   G.flyingMs = 0;
   G.settleMs = -1;
   G.dragPoint = null;
+  // Juice: stretch the cat along its launch direction; clear any old trail.
+  G.catSquashT = 1;
+  G.catSquashSign = 1;          // +1 = stretch (launch), -1 = squash (impact)
+  G.catLastSpeed = Vector.magnitude(v);
+  G.catTrail = [];
   sndLaunch();
   updateHUD();
 }
@@ -219,6 +248,7 @@ function destroyBlock(block) {
   spawnDebris(block.position.x, block.position.y, mat.color);
   Composite.remove(world, block);
   sndBreak();
+  shakeCamera(5, 0.5);            // juice: jolt on a block shatter
   G.score += BLOCK_POINTS;
   G.popups.push({ x: block.position.x, y: block.position.y, text: "+" + BLOCK_POINTS, life: 60 });
   updateHUD();
@@ -240,6 +270,7 @@ export function defeatChicken(chicken, points) {
   chicken.alive = false;
   G.score += points;
   spawnFeathers(chicken.position.x, chicken.position.y);
+  spawnPop(chicken.position.x, chicken.position.y);
   G.popups.push({ x: chicken.position.x, y: chicken.position.y, text: "+" + points, life: 60 });
   Composite.remove(world, chicken);
   updateHUD();
@@ -249,6 +280,35 @@ export function defeatChicken(chicken, points) {
   if (aliveChickens() === 0 && (G.state === "flying" || G.state === "between")) {
     G.state = "between";
     G.settleMs = Math.min(G.settleMs < 0 ? Infinity : G.settleMs, 600);
+    // Juice: a brief slow-motion beat on the level's final chicken. The main
+    // loop scales the timestep; the fixed step stays constant so it's stable.
+    triggerSlowMo();
+  }
+}
+
+// Kick off a short slow-motion window. settleMs runs in *simulated* ms, so
+// scaling the timestep automatically lengthens the real-time 'between' beat to
+// match — the next cat still loads cleanly when the window ends.
+function triggerSlowMo() {
+  if (G.slowMoMs >= 0) return;       // don't restack
+  G.slowMoMs = SLOWMO_MS;
+  G.timeScale = SLOWMO_SCALE;
+}
+
+// A quick scale-up "pop" burst on chicken defeat: a few large, slow, fast-
+// fading puffs that read as a satisfying squish.
+export function spawnPop(x, y) {
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2;
+    const spd = 1.5 + Math.random() * 1.5;
+    G.particles.push({
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      r: 7 + Math.random() * 5,
+      life: 16 + Math.random() * 8,
+      color: "rgba(255,255,255,0.9)",
+    });
   }
 }
 
@@ -314,6 +374,7 @@ function abilitySlam() {
   const v = G.cat.velocity;
   // Keep a little forward momentum, drive hard downward.
   Body.setVelocity(G.cat, { x: v.x * 0.4, y: SLAM_SPEED });
+  shakeCamera(8, 0.7);          // juice: heavy slam jolt
   sndThud();
 }
 
@@ -367,6 +428,7 @@ function abilityExplode() {
     }
   }
   spawnBlast(cx, cy);
+  shakeCamera(14, 1);            // juice: big jolt on a bomber detonation
   sndBreak();
   sndHit();
   // The bomber itself is spent on detonation.
@@ -420,6 +482,15 @@ function spawnDash(x, y, dir) {
 }
 
 // ---- Simulation step ------------------------------------------------------
+// Push a motion-trail sample at the cat's current position when it's moving
+// fast enough to read; samples fade out (life counts down each step).
+function sampleTrail(speed) {
+  if (!G.cat || speed < 4) return;
+  const t = G.catTrail || (G.catTrail = []);
+  t.unshift({ x: G.cat.position.x, y: G.cat.position.y, r: G.cat.gameR, life: 16, max: 16 });
+  if (t.length > 16) t.length = 16;
+}
+
 function updateEffects() {
   for (const p of G.particles) {
     p.x += p.vx;
@@ -430,11 +501,26 @@ function updateEffects() {
   G.particles = G.particles.filter((p) => p.life > 0);
   for (const p of G.popups) { p.y -= 1.1; p.life -= 1; }
   G.popups = G.popups.filter((p) => p.life > 0);
+  // Age the motion trail.
+  if (G.catTrail && G.catTrail.length) {
+    for (const s of G.catTrail) s.life -= 1;
+    G.catTrail = G.catTrail.filter((s) => s.life > 0);
+  }
 }
 
 export function checkFlying(dt) {
   if (G.state !== "flying" || !G.cat) return;
   const speed = Vector.magnitude(G.cat.velocity);
+  // Juice: drop a fading motion-trail sample behind a fast-moving cat, and
+  // detect a hard deceleration (slam into a structure) to trigger an impact
+  // squash + screen shake.
+  sampleTrail(speed);
+  if (G.catLastSpeed - speed > 9 && speed < G.catLastSpeed * 0.6) {
+    G.catSquashT = 1;
+    G.catSquashSign = -1;       // compress on a hard hit
+    shakeCamera(Math.min(10, (G.catLastSpeed - speed) * 0.5), 0.7);
+  }
+  G.catLastSpeed = speed;
   const offscreen = G.cat.position.y > H + 150 || G.cat.position.x > W + 200 || G.cat.position.x < -200;
   G.stillMs = speed < 0.45 ? G.stillMs + dt : 0;
   G.flyingMs += dt;

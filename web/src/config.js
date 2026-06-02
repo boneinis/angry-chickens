@@ -70,6 +70,14 @@ export const SPLIT_RADIUS_MUL = 0.6;   // size of each split piece vs base
 export const EXPLODE_RADIUS = 170;     // blast radius (logical px)
 export const EXPLODE_IMPULSE = 0.32;   // radial impulse strength at the center
 
+// ---- Camera / game-feel tuning -------------------------------------------
+export const CAM_FOLLOW_ZOOM = 1.12;   // gentle zoom-in while following a shot
+export const CAM_EASE = 0.08;          // per-frame easing toward the target
+export const CAM_HOME_EASE = 0.12;     // faster ease back to the home view
+export const SHAKE_DECAY = 0.0042;     // shake timer decay per ms
+export const SLOWMO_MS = 400;          // slow-motion window on the final chicken
+export const SLOWMO_SCALE = 0.35;      // timestep multiplier during slow-motion
+
 // ---- Chicken (target) types ----------------------------------------------
 // `radiusMul`/`densityMul` scale the base CHICK_R / density. `armor:"helmet"`
 // makes a chicken immune to crush/debris (only a direct cat hit or a bomber

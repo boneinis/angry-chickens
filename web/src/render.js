@@ -3,12 +3,19 @@ import { G } from "./state.js";
 import {
   W, H, GROUND_H, GROUND_TOP, SLING, FORK_BASE_Y, LAUNCH_FACTOR, FIXED_DT, CAT_R, CHICK_R,
   MATERIALS, CAT_TYPES, DEFAULT_CAT_TYPE, CHICKEN_TYPES, DEFAULT_CHICKEN_TYPE,
+  CAM_FOLLOW_ZOOM, CAM_EASE, CAM_HOME_EASE, SHAKE_DECAY,
 } from "./config.js";
 import { engine } from "./physics.js";
 import { LEVELS } from "./levels.js";
 
 const Matter = window.Matter;
 const { Vector } = Matter;
+
+// Respect the user's reduced-motion preference: disables screen shake.
+const prefersReducedMotion = (() => {
+  try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+  catch (e) { return false; }
+})();
 
 // ---- Canvas ---------------------------------------------------------------
 export const canvas = document.getElementById("game");
@@ -25,8 +32,107 @@ export function setupCanvas() {
 }
 window.addEventListener("resize", setupCanvas);
 
+// ---- Camera ---------------------------------------------------------------
+// The level's HOME view. For width<=1280 this is the identity transform, which
+// keeps aiming pixel-accurate. Wider levels (future-proofing) scroll to fit the
+// arena width without distorting the vertical axis.
+function homeView() {
+  const lvl = LEVELS[G.levelIndex] || {};
+  const lw = lvl.width || W;
+  if (lw <= W) return { x: 0, y: 0, zoom: 1 };
+  return { x: 0, y: 0, zoom: W / lw };
+}
+
+// The cat (or first split piece) we should be tracking, if any.
+function followBody() {
+  if (G.cat) return G.cat;
+  if (G.catPieces && G.catPieces.length) return G.catPieces[0];
+  return null;
+}
+
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// Advance the camera toward its target each rendered frame. HARD INVARIANT:
+// while "ready"/"aiming" the camera is forced to the level HOME view so the
+// pointer<->world mapping (and thus aiming) is exact.
+function updateCamera() {
+  const cam = G.camera;
+  const home = homeView();
+
+  if (G.state === "ready" || G.state === "aiming") {
+    // Snap-ease home; once close enough, lock to exact home for accuracy.
+    cam.x = lerp(cam.x, home.x, CAM_HOME_EASE);
+    cam.y = lerp(cam.y, home.y, CAM_HOME_EASE);
+    cam.zoom = lerp(cam.zoom, home.zoom, CAM_HOME_EASE);
+    if (Math.abs(cam.x - home.x) < 0.6 && Math.abs(cam.y - home.y) < 0.6 &&
+        Math.abs(cam.zoom - home.zoom) < 0.004) {
+      cam.x = home.x; cam.y = home.y; cam.zoom = home.zoom;
+    }
+    cam.introT = 0;
+  } else if (G.state === "flying" || G.state === "between") {
+    const body = followBody();
+    let tx = home.x, ty = home.y, tz = home.zoom;
+    if (body) {
+      const z = home.zoom * CAM_FOLLOW_ZOOM;
+      // Center on the body, but clamp so we never reveal outside the arena.
+      const halfW = W / (2 * z), halfH = H / (2 * z);
+      let cx = Math.max(halfW, Math.min((home.x === 0 ? W : W) - halfW, body.position.x));
+      let cy = Math.max(halfH, Math.min(H - halfH, body.position.y));
+      tx = cx - W / 2;
+      ty = cy - H / 2;
+      tz = z;
+    }
+    cam.x = lerp(cam.x, tx, CAM_EASE);
+    cam.y = lerp(cam.y, ty, CAM_EASE);
+    cam.zoom = lerp(cam.zoom, tz, CAM_EASE);
+  } else {
+    // Menus / results: ease gently home.
+    cam.x = lerp(cam.x, home.x, CAM_HOME_EASE);
+    cam.y = lerp(cam.y, home.y, CAM_HOME_EASE);
+    cam.zoom = lerp(cam.zoom, home.zoom, CAM_HOME_EASE);
+  }
+
+  // Decay screen shake (time-based, ~per frame at 60fps).
+  if (cam.shakeT > 0) cam.shakeT = Math.max(0, cam.shakeT - SHAKE_DECAY * (1000 / 60));
+  // Decay the squash/stretch timer so the cat self-heals after launch/impact.
+  if (G.catSquashT > 0) G.catSquashT = Math.max(0, G.catSquashT - 0.06);
+}
+
+// Current shake offset in world units (zero when reduced-motion or expired).
+function shakeOffset() {
+  const cam = G.camera;
+  if (prefersReducedMotion || cam.shakeT <= 0) return { x: 0, y: 0 };
+  const m = cam.shakeMag * cam.shakeT;
+  return { x: (Math.random() * 2 - 1) * m, y: (Math.random() * 2 - 1) * m };
+}
+
+// Trigger a screen shake. `mag` in world px, `dur` a 0..1 intensity timer.
+export function shakeCamera(mag, dur = 1) {
+  if (prefersReducedMotion) return;
+  const cam = G.camera;
+  cam.shakeMag = Math.max(cam.shakeMag, mag);
+  cam.shakeT = Math.max(cam.shakeT, dur);
+}
+
+// World coords of the current camera so input.js can invert the mapping.
+export function getCamera() {
+  const cam = G.camera;
+  const sh = shakeOffset();
+  return { x: cam.x + sh.x, y: cam.y + sh.y, zoom: cam.zoom };
+}
+
 export function render() {
+  updateCamera();
+  const cam = G.camera;
+  const sh = shakeOffset();
+
   ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  // Camera transform composed on top of the DPR base transform: zoom about the
+  // origin, then translate by the (negated) camera + shake offset.
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-(cam.x + sh.x), -(cam.y + sh.y));
+
   drawClouds();
   drawGround();
   drawSlingshotBack();
@@ -35,6 +141,7 @@ export function render() {
   G.chickens.forEach((c) => { if (c.alive) drawChicken(c); });
 
   if (G.state === "aiming") drawTrajectory();
+  drawCatTrail();
   // Splitter pieces (if any) are separate bodies; draw each.
   if (G.catPieces && G.catPieces.length) G.catPieces.forEach(drawCat);
   if (G.cat && !(G.catPieces && G.catPieces.includes(G.cat))) drawCat(G.cat);
@@ -43,6 +150,8 @@ export function render() {
   drawCatQueue();
   drawParticles();
   drawPopups();
+
+  ctx.restore();
 }
 
 // Show the upcoming cats (after the one on the sling) as small chips near the
@@ -256,13 +365,34 @@ function drawChicken(c) {
   ctx.restore();
 }
 
+// Squash/stretch factors driven by G.catSquashT (>0). The cat stretches along
+// its travel direction at launch and squashes on a hard impact; the timer
+// decays in render so it self-heals. The main body is the one that gets it.
+function squashScale(c) {
+  if (!G.catSquashT || c !== (G.cat || (G.catPieces && G.catPieces[0]))) return { sx: 1, sy: 1, ang: 0 };
+  const t = G.catSquashT;                       // 0..1
+  // Stretch along velocity direction; amount eases out as t decays.
+  const v = c.velocity || { x: 0, y: 0 };
+  const speed = Math.hypot(v.x, v.y);
+  const ang = speed > 0.2 ? Math.atan2(v.y, v.x) : 0;
+  const amt = 0.35 * t * (G.catSquashSign || 1);
+  return { sx: 1 + amt, sy: 1 - amt, ang };
+}
+
 function drawCat(c) {
   const type = c.gameCatType || DEFAULT_CAT_TYPE;
   const def = CAT_TYPES[type] || CAT_TYPES[DEFAULT_CAT_TYPE];
   const r = c.gameR || CAT_R;
   const s = r / CAT_R;                          // sprite scale vs the base art
+  const sq = squashScale(c);
   ctx.save();
   ctx.translate(c.position.x, c.position.y);
+  // Squash/stretch is applied in the velocity frame so it reads as motion.
+  if (sq.sx !== 1 || sq.sy !== 1) {
+    ctx.rotate(sq.ang);
+    ctx.scale(sq.sx, sq.sy);
+    ctx.rotate(-sq.ang);
+  }
   ctx.rotate(c.angle);
   ctx.scale(s, s);
   // ears
@@ -358,6 +488,24 @@ function drawTrajectory() {
       ctx.fill();
     }
   }
+}
+
+// Fading motion trail behind the flying cat. Samples are pushed by stepSim;
+// here we just render them as shrinking, fading discs in the cat's color.
+function drawCatTrail() {
+  const trail = G.catTrail;
+  if (!trail || !trail.length) return;
+  const def = CAT_TYPES[G.catType] || CAT_TYPES[DEFAULT_CAT_TYPE];
+  for (let i = 0; i < trail.length; i++) {
+    const p = trail[i];
+    const f = p.life / p.max;                   // 1 -> 0
+    ctx.globalAlpha = 0.28 * f;
+    ctx.fillStyle = def.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, (p.r || CAT_R) * (0.4 + 0.5 * f), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawParticles() {
