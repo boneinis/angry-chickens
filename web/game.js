@@ -22,6 +22,8 @@
   const CAT_R = 26;
   const CHICK_R = 28;
   const CATS_PER_LEVEL = 3;
+  const FIXED_DT = 1000 / 60;                // fixed physics timestep (ms)
+  const MAX_SUBSTEPS = 5;                     // cap steps/frame to avoid spiral
 
   // ---- Collision categories (mirrors the old PhysicsCategory.swift) ----
   const CAT_CATEGORY = {
@@ -75,8 +77,17 @@
   // ---- DOM ------------------------------------------------------------------
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
-  canvas.width = W;
-  canvas.height = H;
+
+  // Match the backing store to the displayed size × DPR so the art stays crisp
+  // on high-density screens; we keep drawing in fixed W×H logical coordinates.
+  function setupCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.max(1, Math.round(rect.width * dpr));
+    canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+  }
+  window.addEventListener("resize", setupCanvas);
 
   const levelPill = document.getElementById("level-pill");
   const catsPill = document.getElementById("cats-pill");
@@ -101,22 +112,27 @@
     collisionFilter: { category: CAT_CATEGORY.ground },
     gameType: "ground",
   });
-  const leftWall = Bodies.rectangle(-30, H / 2, 60, H * 3, { isStatic: true });
-  const rightWall = Bodies.rectangle(W + 30, H / 2, 60, H * 3, { isStatic: true });
-  const topWall = Bodies.rectangle(W / 2, -H, W, 60, { isStatic: true });
-  Composite.add(world, [ground, leftWall, rightWall, topWall]);
+  // Containment walls (left, right, top) so bodies can't escape the arena.
+  const walls = [
+    Bodies.rectangle(-30, H / 2, 60, H * 3, { isStatic: true }),
+    Bodies.rectangle(W + 30, H / 2, 60, H * 3, { isStatic: true }),
+    Bodies.rectangle(W / 2, -H, W, 60, { isStatic: true }),
+  ];
+  Composite.add(world, [ground, ...walls]);
 
   // ---- Game state -----------------------------------------------------------
   let state = "ready";        // ready | aiming | flying | between | gameover | win
   let levelIndex = 0;
   let score = 0;
+  let levelStartScore = 0;    // score on entering the current level (for retries)
   let remainingCats = CATS_PER_LEVEL;
   let blocks = [];
   let chickens = [];
   let cat = null;             // current launchable cat body
   let dragPoint = null;       // current pointer position while aiming (world coords)
-  let flyingTimer = 0;        // frames the cat has been (near) still
-  let flyingTotal = 0;        // total frames since launch (hard timeout)
+  let stillMs = 0;            // ms the cat has been (near) still
+  let flyingMs = 0;           // ms since launch (hard timeout)
+  let settleMs = -1;          // ms left in 'between' before the next cat (-1 = idle)
   let particles = [];         // feather/dust bits
   let popups = [];            // floating score text
   let started = false;
@@ -138,6 +154,14 @@
       o.start(t);
       g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
       o.stop(t + dur);
+    } catch (e) { /* audio not available */ }
+  }
+  // Create/resume the AudioContext from a user gesture (browsers start it
+  // suspended otherwise, silently dropping all sound).
+  function unlockAudio() {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
     } catch (e) { /* audio not available */ }
   }
   const sndLaunch = () => beep(220, 0.18, "triangle", 0.25);
@@ -232,8 +256,9 @@
     Body.setAngularVelocity(cat, 0.2);
     remainingCats -= 1;
     state = "flying";
-    flyingTimer = 0;
-    flyingTotal = 0;
+    stillMs = 0;
+    flyingMs = 0;
+    settleMs = -1;
     dragPoint = null;
     sndLaunch();
     updateHUD();
@@ -264,11 +289,13 @@
       showOverlay("You Win! 🏆", `Final score: ${score}`, "Play Again", () => {
         levelIndex = 0;
         score = 0;
+        levelStartScore = 0;
         loadLevel(levelIndex);
       });
     } else {
       showOverlay("Level Complete! ⭐", `Score: ${score}`, "Next Level", () => {
         levelIndex += 1;
+        levelStartScore = score;     // cumulative score carries into the next level
         loadLevel(levelIndex);
       });
     }
@@ -277,6 +304,7 @@
   function gameOver() {
     state = "gameover";
     showOverlay("Out of Cats! 😿", `Score: ${score}`, "Try Again", () => {
+      score = levelStartScore;       // roll back points earned in the failed attempt
       loadLevel(levelIndex);
     });
   }
@@ -288,20 +316,19 @@
       const b = pair.bodyB;
       const rel = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
 
-      // Direct cat -> chicken hit always defeats the chicken.
-      const chickenHitByCat = pickPair(a, b, "chicken", "cat");
-      if (chickenHitByCat) {
-        defeatChicken(chickenHitByCat.chicken, 100);
-        sndHit();
-        continue;
-      }
-
-      // Chicken crushed by debris / hard ground impact.
-      const chickenHit = pickType(a, b, "chicken");
-      if (chickenHit && chickenHit.alive && rel > 9) {
-        defeatChicken(chickenHit, 50);
-        sndHit();
-        continue;
+      const chicken = pickType(a, b, "chicken");
+      if (chicken && chicken.alive) {
+        const byCat = a.gameType === "cat" || b.gameType === "cat";
+        if (byCat) {            // direct cat -> chicken hit always defeats it
+          defeatChicken(chicken, 100);
+          sndHit();
+          continue;
+        }
+        if (rel > 9) {          // crushed by debris / hard impact
+          defeatChicken(chicken, 50);
+          sndHit();
+          continue;
+        }
       }
 
       // Audible thud for heavy structural impacts.
@@ -314,12 +341,6 @@
     if (b.gameType === type) return b;
     return null;
   }
-  // Returns {chicken, other} if the pair matches the two given types.
-  function pickPair(a, b, t1, t2) {
-    if (a.gameType === t1 && b.gameType === t2) return { chicken: a, other: b };
-    if (b.gameType === t1 && a.gameType === t2) return { chicken: b, other: a };
-    return null;
-  }
 
   function defeatChicken(chicken, points) {
     if (!chicken.alive) return;
@@ -329,6 +350,13 @@
     popups.push({ x: chicken.position.x, y: chicken.position.y, text: "+" + points, life: 60 });
     Composite.remove(world, chicken);
     updateHUD();
+
+    // End the round promptly once the last chicken falls, rather than waiting
+    // for the still-moving cat to come to rest.
+    if (aliveChickens() === 0 && (state === "flying" || state === "between")) {
+      state = "between";
+      settleMs = Math.min(settleMs < 0 ? Infinity : settleMs, 600);
+    }
   }
 
   function spawnFeathers(x, y) {
@@ -359,6 +387,7 @@
     overlayBtn.textContent = btn;
     overlay.classList.remove("hidden");
     overlayBtn.onclick = () => {
+      unlockAudio();
       overlay.classList.add("hidden");
       onClick();
     };
@@ -483,16 +512,20 @@
     }
   }
 
+  // A slingshot band from a fork anchor to the cat (shown while it's in the pocket).
+  function drawBand(anchorX, anchorY, color) {
+    if (!cat || (state !== "aiming" && state !== "ready")) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.moveTo(anchorX, anchorY);
+    ctx.lineTo(cat.position.x, cat.position.y);
+    ctx.stroke();
+  }
+
   function drawSlingshotBack() {
-    // The far band (drawn before the cat so the cat sits in the pocket)
-    if ((state === "aiming" || state === "ready") && cat) {
-      ctx.strokeStyle = "#5b3a1a";
-      ctx.lineWidth = 9;
-      ctx.beginPath();
-      ctx.moveTo(SLING.x + 14, SLING.y - 30);
-      ctx.lineTo(cat.position.x, cat.position.y);
-      ctx.stroke();
-    }
+    // The far band, drawn before the cat so the cat sits in the pocket.
+    drawBand(SLING.x + 14, SLING.y - 30, "#5b3a1a");
   }
 
   function drawSlingshotFront() {
@@ -514,14 +547,7 @@
     ctx.stroke();
 
     // near band
-    if ((state === "aiming" || state === "ready") && cat) {
-      ctx.strokeStyle = "#7a4a22";
-      ctx.lineWidth = 9;
-      ctx.beginPath();
-      ctx.moveTo(baseX - 16, SLING.y - 30);
-      ctx.lineTo(cat.position.x, cat.position.y);
-      ctx.stroke();
-    }
+    drawBand(baseX - 16, SLING.y - 30, "#7a4a22");
   }
 
   function drawBlock(b) {
@@ -636,9 +662,11 @@
     let vy = pull.y * LAUNCH_FACTOR;
     let px = cat.position.x;
     let py = cat.position.y;
-    const g = engine.gravity.y * engine.gravity.scale * 278; // ~velocity gain per 16.7ms step
+    // Mirror the engine's per-step integration so the preview matches the shot.
+    const g = engine.gravity.y * engine.gravity.scale * FIXED_DT * FIXED_DT;
     ctx.fillStyle = "rgba(255,255,255,0.85)";
     for (let i = 0; i < 28; i++) {
+      vx *= 0.996; vy *= 0.996;   // approximate the cat's frictionAir
       px += vx;
       py += vy;
       vy += g;
@@ -700,17 +728,18 @@
     popups = popups.filter((p) => p.life > 0);
   }
 
-  function checkFlying() {
+  function checkFlying(dt) {
     if (state !== "flying" || !cat) return;
     const speed = Vector.magnitude(cat.velocity);
     const offscreen = cat.position.y > H + 150 || cat.position.x > W + 200 || cat.position.x < -200;
-    if (speed < 0.45) flyingTimer += 1; else flyingTimer = 0;
-    flyingTotal += 1;
+    stillMs = speed < 0.45 ? stillMs + dt : 0;
+    flyingMs += dt;
     // Settle when the cat rests for a while, leaves the arena, or hits the
-    // hard time limit (guarantees the next cat always loads).
-    if (flyingTimer > 45 || offscreen || flyingTotal > 360) {
+    // hard time limit (guarantees the next cat always loads). Time-based so the
+    // feel is identical across refresh rates.
+    if (stillMs > 750 || offscreen || flyingMs > 6000) {
       state = "between";
-      setTimeout(() => { if (state === "between") catSettled(); }, 350);
+      settleMs = 350;
     }
   }
 
@@ -723,16 +752,36 @@
     }
   }
 
-  // ---- Main loop ------------------------------------------------------------
+  // ---- Simulation + main loop -----------------------------------------------
+  // Game logic advanced once per fixed physics step (dt in ms).
+  function stepSim(dt) {
+    checkFlying(dt);
+    cullChickens();
+    updateEffects();
+    if (state === "between" && settleMs >= 0) {
+      settleMs -= dt;
+      if (settleMs <= 0) { settleMs = -1; catSettled(); }
+    }
+  }
+
+  // Fixed-timestep accumulator: Matter is only stable with a constant dt, so we
+  // step it a whole number of times per frame and carry the remainder.
+  let accumulator = 0;
   let last = performance.now();
   function loop(now) {
-    const dt = Math.min(33, now - last);
+    let frame = now - last;
     last = now;
     if (started) {
-      Engine.update(engine, dt);
-      checkFlying();
-      cullChickens();
-      updateEffects();
+      if (frame > 250) frame = 250;          // clamp after a tab was backgrounded
+      accumulator += frame;
+      let steps = 0;
+      while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
+        Engine.update(engine, FIXED_DT);
+        stepSim(FIXED_DT);
+        accumulator -= FIXED_DT;
+        steps++;
+      }
+      if (steps === MAX_SUBSTEPS) accumulator = 0;   // drop backlog, avoid spiral
     }
     render();
     requestAnimationFrame(loop);
@@ -743,6 +792,7 @@
     started = true;
     levelIndex = 0;
     score = 0;
+    levelStartScore = 0;
     loadLevel(levelIndex);
     overlay.classList.add("hidden");
   }
@@ -754,6 +804,7 @@
     startGame
   );
 
+  setupCanvas();
   updateHUD();
   requestAnimationFrame(loop);
 })();
