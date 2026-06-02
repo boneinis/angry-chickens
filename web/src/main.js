@@ -43,7 +43,7 @@ function loop(now) {
 // Lightweight state accessor for automated tests / debugging.
 window.__game = () => ({
   state: G.state, level: G.levelIndex, cats: G.remainingCats, score: G.score,
-  alive: aliveChickens(),
+  alive: aliveChickens(), blocks: G.blocks.length,
   cat: G.cat ? { x: Math.round(G.cat.position.x), y: Math.round(G.cat.position.y) } : null,
 });
 
