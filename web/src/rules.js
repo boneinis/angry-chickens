@@ -3,10 +3,13 @@ import { G } from "./state.js";
 import {
   W, H, SLING, MAX_STRETCH, LAUNCH_FACTOR, CATS_PER_LEVEL, CAT_BONUS,
   MATERIALS, BLOCK_POINTS, DAMAGE_THRESHOLD, DAMAGE_SCALE,
+  CAT_TYPES, DEFAULT_CAT_TYPE,
+  DASH_SPEED, SLAM_SPEED, SPLIT_COUNT, SPLIT_SPREAD, SPLIT_RADIUS_MUL,
+  EXPLODE_RADIUS, EXPLODE_IMPULSE, CHICKEN_TYPES,
 } from "./config.js";
 import { LEVELS } from "./levels.js";
 import {
-  engine, world, makeBlock, makeChicken, makeCat, clearBodies,
+  engine, world, makeBlock, makeChicken, makeCat, makeCatPiece, clearBodies,
 } from "./physics.js";
 import { sndLaunch, sndHit, sndThud, sndBreak } from "./audio.js";
 import { updateHUD, showResults, showGameOver, showMenu, showLevelSelect } from "./ui.js";
@@ -47,6 +50,11 @@ export function loadLevel(idx) {
   clearBodies(G.blocks);
   clearBodies(G.chickens);
   if (G.cat) { Composite.remove(world, G.cat); G.cat = null; }
+  if (G.catPieces && G.catPieces.length) {
+    G.catPieces.forEach((p) => Composite.remove(world, p));
+  }
+  G.catPieces = [];
+  G.abilityReady = false;
   G.particles = [];
   G.popups = [];
 
@@ -63,7 +71,15 @@ export function loadLevel(idx) {
 
 export function prepareCat() {
   if (G.remainingCats <= 0) { checkEndOfRound(); return; }
-  G.cat = makeCat();
+  const lvl = LEVELS[G.levelIndex];
+  // Cats come out of the level queue in order: index = how many already used.
+  const queue = (lvl && lvl.cats) || [];
+  const used = queue.length - G.remainingCats;
+  const type = (queue[used] && CAT_TYPES[queue[used]]) ? queue[used] : DEFAULT_CAT_TYPE;
+  G.catType = type;
+  G.cat = makeCat(type);
+  G.catPieces = [];
+  G.abilityReady = false;       // only armed once launched
   G.dragPoint = null;
   G.state = "ready";
 }
@@ -76,6 +92,9 @@ export function launch() {
   Body.setStatic(G.cat, false);
   Body.setVelocity(G.cat, v);
   Body.setAngularVelocity(G.cat, 0.2);
+  // Arm the in-flight ability if this cat type has one.
+  const def = CAT_TYPES[G.catType] || CAT_TYPES[DEFAULT_CAT_TYPE];
+  G.abilityReady = !!(def && def.ability);
   G.remainingCats -= 1;
   G.state = "flying";
   G.stillMs = 0;
@@ -89,6 +108,11 @@ export function launch() {
 // Settle the round once the launched cat comes to rest or leaves the arena.
 export function catSettled() {
   if (G.cat) { Composite.remove(world, G.cat); G.cat = null; }
+  if (G.catPieces && G.catPieces.length) {
+    G.catPieces.forEach((p) => Composite.remove(world, p));
+    G.catPieces = [];
+  }
+  G.abilityReady = false;
   if (aliveChickens() === 0) { winLevel(); return; }
   if (G.remainingCats <= 0) { checkEndOfRound(); return; }
   prepareCat();
@@ -150,12 +174,14 @@ Events.on(engine, "collisionStart", (evt) => {
     if (chicken && chicken.alive) {
       const byCat = a.gameType === "cat" || b.gameType === "cat";
       if (byCat) {            // direct cat -> chicken hit always defeats it
-        defeatChicken(chicken, 100);
+        defeatChicken(chicken, chickenPoints(chicken));
         sndHit();
         continue;
       }
-      if (rel > 9) {          // crushed by debris / hard impact
-        defeatChicken(chicken, 50);
+      // Helmet chickens shrug off crush/debris; only a direct cat (above) or a
+      // bomber explosion can defeat them.
+      if (rel > 9 && chicken.gameArmor !== "helmet") {
+        defeatChicken(chicken, Math.round(chickenPoints(chicken) * 0.5));
         sndHit();
         continue;
       }
@@ -204,6 +230,11 @@ function pickType(a, b, type) {
   return null;
 }
 
+function chickenPoints(chicken) {
+  const t = CHICKEN_TYPES[chicken.gameChickenType];
+  return (t && t.points) || 100;
+}
+
 export function defeatChicken(chicken, points) {
   if (!chicken.alive) return;
   chicken.alive = false;
@@ -248,6 +279,142 @@ export function spawnDebris(x, y, color) {
       r: 2 + Math.random() * 4,
       life: 35 + Math.random() * 25,
       color,
+    });
+  }
+}
+
+// ---- In-flight abilities --------------------------------------------------
+// Called by input.js on a tap while a special cat is flying. Fires once.
+export function activateAbility() {
+  if (G.state !== "flying" || !G.abilityReady || !G.cat) return false;
+  const def = CAT_TYPES[G.catType] || CAT_TYPES[DEFAULT_CAT_TYPE];
+  if (!def || !def.ability) return false;
+  G.abilityReady = false;            // one-shot
+  switch (def.ability) {
+    case "dash":    abilityDash();    break;
+    case "explode": abilityExplode(); break;
+    case "split":   abilitySplit();   break;
+    case "slam":    abilitySlam();    break;
+    default: return false;
+  }
+  return true;
+}
+
+function abilityDash() {
+  const v = G.cat.velocity;
+  const mag = Vector.magnitude(v);
+  // Boost along current travel direction; if nearly still, dash forward+down.
+  const dir = mag > 0.01 ? Vector.div(v, mag) : { x: 0.85, y: 0.2 };
+  Body.setVelocity(G.cat, Vector.mult(dir, DASH_SPEED));
+  spawnDash(G.cat.position.x, G.cat.position.y, dir);
+  sndLaunch();
+}
+
+function abilitySlam() {
+  const v = G.cat.velocity;
+  // Keep a little forward momentum, drive hard downward.
+  Body.setVelocity(G.cat, { x: v.x * 0.4, y: SLAM_SPEED });
+  sndThud();
+}
+
+function abilitySplit() {
+  const base = G.cat;
+  const v = base.velocity;
+  const speed = Math.max(6, Vector.magnitude(v));
+  const baseAng = Math.atan2(v.y, v.x);
+  const px = base.position.x, py = base.position.y;
+  // Remove the original; replace with a fan of smaller pieces.
+  Composite.remove(world, base);
+  G.cat = null;
+  G.catPieces = G.catPieces || [];
+  const n = SPLIT_COUNT;
+  for (let i = 0; i < n; i++) {
+    const frac = n === 1 ? 0 : (i / (n - 1)) * 2 - 1;     // -1..1
+    const ang = baseAng + frac * SPLIT_SPREAD;
+    const piece = makeCatPiece(px, py, "splitter");
+    Body.scale(piece, SPLIT_RADIUS_MUL, SPLIT_RADIUS_MUL);
+    piece.gameR = (piece.gameR || 0) * SPLIT_RADIUS_MUL;   // keep sprite size in sync
+    Body.setVelocity(piece, { x: Math.cos(ang) * speed, y: Math.sin(ang) * speed });
+    Body.setAngularVelocity(piece, 0.25);
+    G.catPieces.push(piece);
+  }
+  // Steer checkFlying / settle logic onto the first piece.
+  G.cat = G.catPieces[0];
+  sndLaunch();
+}
+
+function abilityExplode() {
+  const cx = G.cat.position.x, cy = G.cat.position.y;
+  const R = EXPLODE_RADIUS;
+  // Radial impulse + damage to nearby blocks; defeat nearby chickens (incl.
+  // helmets — an explosion is a direct cat effect).
+  for (const c of G.chickens) {
+    if (!c.alive) continue;
+    if (Vector.magnitude(Vector.sub(c.position, { x: cx, y: cy })) <= R) {
+      pushFromBlast(c, cx, cy, R);
+      defeatChicken(c, chickenPoints(c));
+    }
+  }
+  for (let i = G.blocks.length - 1; i >= 0; i--) {
+    const blk = G.blocks[i];
+    const d = Vector.magnitude(Vector.sub(blk.position, { x: cx, y: cy }));
+    if (d <= R) {
+      pushFromBlast(blk, cx, cy, R);
+      if (blk.gameHp != null) {
+        blk.gameHp -= (blk.gameMaxHp || 100) * (1 - d / R) * 1.6;
+        if (blk.gameHp <= 0) destroyBlock(blk);
+      }
+    }
+  }
+  spawnBlast(cx, cy);
+  sndBreak();
+  sndHit();
+  // The bomber itself is spent on detonation.
+  if (G.cat) { Composite.remove(world, G.cat); G.cat = null; }
+  if (aliveChickens() === 0 && (G.state === "flying" || G.state === "between")) {
+    G.state = "between";
+    G.settleMs = 500;
+  } else {
+    G.state = "between";
+    G.settleMs = 350;
+  }
+}
+
+function pushFromBlast(body, cx, cy, R) {
+  if (body.isStatic) return;
+  const dx = body.position.x - cx;
+  const dy = body.position.y - cy;
+  const d = Math.max(8, Math.hypot(dx, dy));
+  const falloff = Math.max(0, 1 - d / R);
+  const mag = EXPLODE_IMPULSE * falloff * (body.mass || 1);
+  Body.applyForce(body, body.position, { x: (dx / d) * mag, y: (dy / d) * mag });
+}
+
+function spawnBlast(x, y) {
+  for (let i = 0; i < 26; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const spd = 3 + Math.random() * 7;
+    G.particles.push({
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      r: 3 + Math.random() * 5,
+      life: 30 + Math.random() * 25,
+      color: Math.random() < 0.5 ? "#ff8c1a" : "#ffd23f",
+    });
+  }
+}
+
+function spawnDash(x, y, dir) {
+  for (let i = 0; i < 10; i++) {
+    G.particles.push({
+      x: x - dir.x * i * 4,
+      y: y - dir.y * i * 4,
+      vx: -dir.x * (1 + Math.random() * 2),
+      vy: -dir.y * (1 + Math.random() * 2),
+      r: 2 + Math.random() * 3,
+      life: 18 + Math.random() * 12,
+      color: "#dff3ff",
     });
   }
 }

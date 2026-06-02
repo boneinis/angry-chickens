@@ -3,10 +3,14 @@ import { G } from "./state.js";
 import { W, H, SLING, MAX_STRETCH, CAT_R } from "./config.js";
 import { canvas } from "./render.js";
 import { hint } from "./ui.js";
-import { launch } from "./rules.js";
+import { launch, activateAbility } from "./rules.js";
 
 const Matter = window.Matter;
 const { Body, Vector } = Matter;
+
+// Pointer-down position (screen px) used to tell a tap from a drag.
+let downPt = null;
+const TAP_SLOP = 8;          // max movement (screen px) still counted as a tap
 
 function toWorld(evt) {
   const rect = canvas.getBoundingClientRect();
@@ -15,7 +19,18 @@ function toWorld(evt) {
   return { x: cx * (W / rect.width), y: cy * (H / rect.height) };
 }
 
+function screenPt(evt) {
+  const x = evt.touches ? evt.touches[0].clientX : evt.clientX;
+  const y = evt.touches ? evt.touches[0].clientY : evt.clientY;
+  return { x, y };
+}
+
 function onDown(evt) {
+  // While a special cat is in flight, a tap (not a drag) fires its ability.
+  if (G.state === "flying" && G.abilityReady) {
+    downPt = screenPt(evt);
+    return;                                  // resolved on pointer-up as tap
+  }
   if (G.state !== "ready" || !G.cat) return;
   const p = toWorld(evt);
   if (Vector.magnitude(Vector.sub(p, G.cat.position)) <= CAT_R * 2.2) {
@@ -36,6 +51,18 @@ function onMove(evt) {
 }
 
 function onUp(evt) {
+  // Tap while flying -> ability (only if the pointer barely moved).
+  if (downPt && G.state === "flying" && G.abilityReady) {
+    const up = evt && (evt.changedTouches ? { x: evt.changedTouches[0].clientX, y: evt.changedTouches[0].clientY } : { x: evt.clientX, y: evt.clientY });
+    const moved = up ? Math.hypot(up.x - downPt.x, up.y - downPt.y) : 0;
+    downPt = null;
+    if (moved <= TAP_SLOP) {
+      activateAbility();
+      if (evt) evt.preventDefault();
+      return;
+    }
+  }
+  downPt = null;
   if (G.state !== "aiming") return;
   canvas.classList.remove("grabbing");
   // A tiny pull is treated as a cancel (snap back).

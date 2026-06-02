@@ -2,9 +2,10 @@
 import { G } from "./state.js";
 import {
   W, H, GROUND_H, GROUND_TOP, SLING, FORK_BASE_Y, LAUNCH_FACTOR, FIXED_DT, CAT_R, CHICK_R,
-  MATERIALS,
+  MATERIALS, CAT_TYPES, DEFAULT_CAT_TYPE, CHICKEN_TYPES, DEFAULT_CHICKEN_TYPE,
 } from "./config.js";
 import { engine } from "./physics.js";
+import { LEVELS } from "./levels.js";
 
 const Matter = window.Matter;
 const { Vector } = Matter;
@@ -34,11 +35,43 @@ export function render() {
   G.chickens.forEach((c) => { if (c.alive) drawChicken(c); });
 
   if (G.state === "aiming") drawTrajectory();
-  if (G.cat) drawCat(G.cat);
+  // Splitter pieces (if any) are separate bodies; draw each.
+  if (G.catPieces && G.catPieces.length) G.catPieces.forEach(drawCat);
+  if (G.cat && !(G.catPieces && G.catPieces.includes(G.cat))) drawCat(G.cat);
 
   drawSlingshotFront();
+  drawCatQueue();
   drawParticles();
   drawPopups();
+}
+
+// Show the upcoming cats (after the one on the sling) as small chips near the
+// fork base so the player can plan which ability comes next.
+function drawCatQueue() {
+  if (!G.started) return;
+  const lvl = LEVELS[G.levelIndex];
+  const queue = (lvl && lvl.cats) || [];
+  const used = queue.length - G.remainingCats;   // index of the cat in hand
+  const upcoming = queue.slice(used + 1);        // those still waiting
+  if (!upcoming.length) return;
+  const baseX = SLING.x - 26;
+  const y = FORK_BASE_Y + 30;
+  for (let i = 0; i < upcoming.length && i < 5; i++) {
+    const def = CAT_TYPES[upcoming[i]] || CAT_TYPES[DEFAULT_CAT_TYPE];
+    const x = baseX + i * 30;
+    ctx.beginPath();
+    ctx.arc(x, y, 11, 0, Math.PI * 2);
+    ctx.fillStyle = def.color;
+    ctx.fill();
+    ctx.strokeStyle = def.stroke;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x - 3, y - 2, 3, 0, Math.PI * 2);
+    ctx.arc(x + 3, y - 2, 3, 0, Math.PI * 2);
+    ctx.fillStyle = def.accent;
+    ctx.fill();
+  }
 }
 
 function drawClouds() {
@@ -163,9 +196,14 @@ function drawCracks(w, h, count) {
 }
 
 function drawChicken(c) {
+  // Radius from the body when available so "big" chickens visibly grow.
+  const r = c.gameR || CHICK_R;
+  const s = r / CHICK_R;                       // sprite scale vs the base art
+  const armor = c.gameArmor;
   ctx.save();
   ctx.translate(c.position.x, c.position.y);
   ctx.rotate(c.angle);
+  ctx.scale(s, s);
   // body
   ctx.fillStyle = "#ffd23f";
   ctx.strokeStyle = "#f08c00";
@@ -199,29 +237,50 @@ function drawChicken(c) {
   ctx.lineTo(0, 16);
   ctx.closePath();
   ctx.fill();
+  // helmet: a steel dome with a chin strap, hiding the comb.
+  if (armor === "helmet") {
+    ctx.fillStyle = "#7f8a96";
+    ctx.strokeStyle = "#4c545c";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(0, -4, CHICK_R - 2, Math.PI * 1.04, Math.PI * 1.96);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // rivet + strap accent
+    ctx.fillStyle = "#cfd6dc";
+    ctx.beginPath();
+    ctx.arc(0, -CHICK_R + 4, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
 function drawCat(c) {
+  const type = c.gameCatType || DEFAULT_CAT_TYPE;
+  const def = CAT_TYPES[type] || CAT_TYPES[DEFAULT_CAT_TYPE];
+  const r = c.gameR || CAT_R;
+  const s = r / CAT_R;                          // sprite scale vs the base art
   ctx.save();
   ctx.translate(c.position.x, c.position.y);
   ctx.rotate(c.angle);
+  ctx.scale(s, s);
   // ears
-  ctx.fillStyle = "#7d7d7d";
+  ctx.fillStyle = def.stroke;
   ctx.beginPath();
   ctx.moveTo(-CAT_R + 4, -CAT_R + 6); ctx.lineTo(-8, -CAT_R - 8); ctx.lineTo(-2, -CAT_R + 8); ctx.closePath();
   ctx.moveTo(CAT_R - 4, -CAT_R + 6); ctx.lineTo(8, -CAT_R - 8); ctx.lineTo(2, -CAT_R + 8); ctx.closePath();
   ctx.fill();
   // head
-  ctx.fillStyle = "#8a8a8a";
-  ctx.strokeStyle = "#5e5e5e";
+  ctx.fillStyle = def.color;
+  ctx.strokeStyle = def.stroke;
   ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.arc(0, 0, CAT_R, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
-  // eyes
-  ctx.fillStyle = "#a5d65b";
+  // eyes (accent color per type)
+  ctx.fillStyle = def.accent;
   ctx.beginPath();
   ctx.arc(-8, -2, 6, 0, Math.PI * 2);
   ctx.arc(8, -2, 6, 0, Math.PI * 2);
@@ -243,6 +302,37 @@ function drawCat(c) {
   ctx.moveTo(-4, 9); ctx.lineTo(-20, 6);
   ctx.moveTo(-4, 11); ctx.lineTo(-20, 13);
   ctx.stroke();
+  // Per-type forehead marking so types read at a glance.
+  drawCatMark(type, def);
+  ctx.restore();
+}
+
+// A small badge on the cat's forehead that identifies its type/ability.
+function drawCatMark(type, def) {
+  ctx.save();
+  ctx.translate(0, -CAT_R + 9);
+  ctx.lineWidth = 2.2;
+  if (type === "speedy") {                      // forward chevrons (dash)
+    ctx.strokeStyle = def.accent;
+    ctx.beginPath();
+    ctx.moveTo(-6, -4); ctx.lineTo(0, 0); ctx.lineTo(-6, 4);
+    ctx.moveTo(0, -4); ctx.lineTo(6, 0); ctx.lineTo(0, 4);
+    ctx.stroke();
+  } else if (type === "bomber") {               // fuse spark (explode)
+    ctx.fillStyle = def.accent;
+    ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = def.accent;
+    ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(3, -9); ctx.stroke();
+  } else if (type === "splitter") {             // three dots (split)
+    ctx.fillStyle = def.accent;
+    for (const dx of [-6, 0, 6]) { ctx.beginPath(); ctx.arc(dx, 0, 2.4, 0, Math.PI * 2); ctx.fill(); }
+  } else if (type === "heavy") {                // down arrow (slam)
+    ctx.strokeStyle = def.accent;
+    ctx.beginPath();
+    ctx.moveTo(0, -5); ctx.lineTo(0, 5);
+    ctx.moveTo(-4, 1); ctx.lineTo(0, 5); ctx.lineTo(4, 1);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 

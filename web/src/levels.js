@@ -2,14 +2,15 @@
 // Schema v2. Each level:
 //   { id, name, cats, stars, bg, width, blocks, chickens }
 // - block  = { x, y, w, h, material:"wood"|"ice"|"stone", angle:0 }
-// - chicken = { x, y, type:"basic" }
-// material/angle/type/cats/stars/bg/width are forward-compatible metadata; the
-// current engine only reads block x,y,w,h and chicken x,y (and a fixed 3 cats).
+// - chicken = { x, y, type:"basic"|"helmet"|"big" }
+// - cats    = ["basic"|"speedy"|"bomber"|"splitter"|"heavy", ...] (queue order)
+// The engine reads block x,y,w,h+material, chicken x,y+type, and the cats queue.
 // Design rules honored here:
 //   - chickens are never fully enclosed (always reachable / perched in the open)
 //   - everything sits inside the arena (targets x ~600..1180, on ground/platforms)
 //   - a platform's top edge = (y - h/2); a chicken resting on it has y = top - 28
-//   - every level is clearable with the engine's 3 basic cats
+//   - every level is clearable with PLAIN DIRECT HITS (no ability taps required):
+//     special cats are >= basic, helmet/big chickens die to one direct cat hit.
 //
 // GROUND_TOP = 610. A block resting flat on the ground has y = 610 - h/2.
 // CHICK_R = 28: a chicken on the ground has y = 610 - 28 = 582.
@@ -44,10 +45,11 @@ export const LEVELS = [
   },
 
   // 1-3 — a chicken perched on a short, knock-down stack (open, no roof).
+  // Introduces the speedy cat (still a normal direct-hit projectile).
   {
     id: "1-3",
     name: "Little Lookout",
-    cats: ["basic", "basic", "basic"],
+    cats: ["speedy", "basic", "basic"],
     stars: [200, 1200, 2200],
     bg: "day",
     width: 1280,
@@ -75,7 +77,7 @@ export const LEVELS = [
       { x: 990, y: 500, w: 140, h: 20, material: "wood", angle: 0 },  // lintel (top edge y=490)
     ],
     chickens: [
-      { x: 700, y: 582, type: "basic" },   // ground target
+      { x: 700, y: 582, type: "helmet" },  // exposed ground target wearing a helmet (direct hit clears it)
       { x: 990, y: 462, type: "basic" },   // perched on the lintel (open above)
     ],
   },
@@ -102,7 +104,7 @@ export const LEVELS = [
   {
     id: "2-3",
     name: "Twin Lookouts",
-    cats: ["basic", "basic", "basic"],
+    cats: ["speedy", "basic", "basic"],
     stars: [300, 1300, 2400],
     bg: "day",
     width: 1280,
@@ -118,7 +120,7 @@ export const LEVELS = [
     ],
     chickens: [
       { x: 790, y: 462, type: "basic" },   // left tower top
-      { x: 960, y: 582, type: "basic" },   // exposed on the ground between
+      { x: 960, y: 568, type: "big" },     // exposed big chicken on the ground (1 direct hit)
       { x: 1130, y: 462, type: "basic" },  // right tower top
     ],
   },
@@ -127,7 +129,7 @@ export const LEVELS = [
   {
     id: "3-1",
     name: "Stone Steps",
-    cats: ["basic", "basic", "basic"],
+    cats: ["bomber", "basic", "basic"],
     stars: [300, 1300, 2400],
     bg: "day",
     width: 1280,
@@ -163,7 +165,7 @@ export const LEVELS = [
   {
     id: "3-3",
     name: "Rolling Hills",
-    cats: ["basic", "basic", "basic"],
+    cats: ["splitter", "basic", "basic"],
     stars: [300, 1300, 2400],
     bg: "day",
     width: 1280,
@@ -173,7 +175,7 @@ export const LEVELS = [
     ],
     chickens: [
       { x: 700, y: 562, type: "basic" },   // left low perch
-      { x: 880, y: 582, type: "basic" },   // exposed on the ground (front of the pillar)
+      { x: 880, y: 582, type: "helmet" },  // exposed on the ground (direct hit clears the helmet)
       { x: 1010, y: 472, type: "basic" },  // mid-high perch on the open pillar
     ],
   },
@@ -182,7 +184,7 @@ export const LEVELS = [
   {
     id: "4-1",
     name: "Mixed Fort",
-    cats: ["basic", "basic", "basic", "basic"],
+    cats: ["heavy", "basic", "basic", "basic"],
     stars: [300, 1300, 2500],
     bg: "dusk",
     width: 1280,
@@ -202,7 +204,7 @@ export const LEVELS = [
   {
     id: "4-2",
     name: "Layer Cake",
-    cats: ["basic", "basic", "basic", "basic"],
+    cats: ["splitter", "basic", "basic", "basic"],
     stars: [300, 1400, 2600],
     bg: "dusk",
     width: 1280,
@@ -217,7 +219,7 @@ export const LEVELS = [
       { x: 970, y: 420, w: 140, h: 20, material: "ice", angle: 0 },   // tier-2 top edge y=410
     ],
     chickens: [
-      { x: 700, y: 582, type: "basic" },   // ground target
+      { x: 700, y: 568, type: "big" },     // exposed big ground target (1 direct hit)
       { x: 880, y: 462, type: "basic" },   // on tier-1 platform (left of upper posts, open)
       { x: 970, y: 382, type: "basic" },   // on top tier (open)
     ],
@@ -227,7 +229,7 @@ export const LEVELS = [
   {
     id: "4-3",
     name: "Castle Siege",
-    cats: ["basic", "basic", "basic", "basic"],
+    cats: ["bomber", "heavy", "splitter", "basic"],
     stars: [400, 1500, 2800],
     bg: "dusk",
     width: 1280,
@@ -243,7 +245,7 @@ export const LEVELS = [
     ],
     chickens: [
       { x: 680, y: 542, type: "basic" },   // on the outpost
-      { x: 870, y: 582, type: "basic" },   // exposed on the ground
+      { x: 870, y: 582, type: "helmet" },  // exposed on the ground (direct hit clears the helmet)
       { x: 985, y: 462, type: "basic" },   // on tier-1 (left, open)
       { x: 1075, y: 382, type: "basic" },  // on the upper pedestal (open)
     ],

@@ -3,6 +3,7 @@ import { G } from "./state.js";
 import {
   W, H, GROUND_H, GROUND_TOP, SLING, CAT_R, CHICK_R, GRAVITY_SCALE, CAT_CATEGORY,
   MATERIALS, DEFAULT_MATERIAL, BLOCK_BASE_HP,
+  CAT_TYPES, DEFAULT_CAT_TYPE, CHICKEN_TYPES, DEFAULT_CHICKEN_TYPE,
 } from "./config.js";
 
 const Matter = window.Matter;
@@ -54,12 +55,18 @@ export function makeBlock(b) {
 }
 
 export function makeChicken(c) {
-  const body = Bodies.circle(c.x, c.y, CHICK_R, {
+  const typeName = CHICKEN_TYPES[c.type] ? c.type : DEFAULT_CHICKEN_TYPE;
+  const t = CHICKEN_TYPES[typeName];
+  const r = CHICK_R * t.radiusMul;
+  const body = Bodies.circle(c.x, c.y, r, {
     friction: 0.5,
     restitution: 0.05,
-    density: 0.001,
+    density: 0.001 * t.densityMul,
     collisionFilter: { category: CAT_CATEGORY.chicken },
     gameType: "chicken",
+    gameChickenType: typeName,
+    gameArmor: t.armor,
+    gameR: r,
     alive: true,
   });
   G.chickens.push(body);
@@ -67,18 +74,44 @@ export function makeChicken(c) {
   return body;
 }
 
-export function makeCat() {
+export function makeCat(type) {
+  const typeName = CAT_TYPES[type] ? type : DEFAULT_CAT_TYPE;
+  const t = CAT_TYPES[typeName];
+  const r = CAT_R * t.radiusMul;
   // Create dynamic first, THEN freeze with setStatic so Matter records the
   // body's real mass — otherwise unfreezing on launch leaves mass = Infinity.
-  const body = Bodies.circle(SLING.x, SLING.y, CAT_R, {
+  const body = Bodies.circle(SLING.x, SLING.y, r, {
     friction: 0.4,
     restitution: 0.25,
-    density: 0.005,            // heavy, for impact
+    density: 0.005 * t.densityMul, // heavy, for impact
     frictionAir: 0.004,
     collisionFilter: { category: CAT_CATEGORY.cat },
     gameType: "cat",
+    gameCatType: typeName,
+    gameR: r,
   });
   Body.setStatic(body, true);  // held until launched
+  Composite.add(world, body);
+  return body;
+}
+
+// A smaller free body spawned by the splitter ability. Already dynamic +
+// launched (caller sets velocity). Counts as a cat for collision purposes.
+export function makeCatPiece(x, y, type) {
+  const typeName = CAT_TYPES[type] ? type : DEFAULT_CAT_TYPE;
+  const t = CAT_TYPES[typeName];
+  const r = CAT_R * t.radiusMul;
+  const body = Bodies.circle(x, y, r, {
+    friction: 0.4,
+    restitution: 0.3,
+    density: 0.005 * t.densityMul,
+    frictionAir: 0.004,
+    collisionFilter: { category: CAT_CATEGORY.cat },
+    gameType: "cat",
+    gameCatType: typeName,
+    gameR: r,
+    gameIsPiece: true,
+  });
   Composite.add(world, body);
   return body;
 }
