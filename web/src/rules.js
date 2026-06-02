@@ -401,8 +401,12 @@ function abilitySplit() {
     Body.setAngularVelocity(piece, 0.25);
     G.catPieces.push(piece);
   }
-  // Steer checkFlying / settle logic onto the first piece.
+  // Steer checkFlying / settle logic onto the first piece, and give the fresh
+  // pieces a full flight window so they aren't force-settled right after a late
+  // split.
   G.cat = G.catPieces[0];
+  G.flyingMs = 0;
+  G.stillMs = 0;
   sndLaunch();
 }
 
@@ -523,13 +527,20 @@ export function checkFlying(dt) {
     shakeCamera(Math.min(10, (G.catLastSpeed - speed) * 0.5), 0.7);
   }
   G.catLastSpeed = speed;
-  const offscreen = G.cat.position.y > H + 150 || G.cat.position.x > W + 200 || G.cat.position.x < -200;
-  G.stillMs = speed < 0.45 ? G.stillMs + dt : 0;
+  // Consider ALL active projectiles. A splitter spawns several pieces, and
+  // catSettled deletes every piece — so the round must not settle until each
+  // one is at rest or off-screen, otherwise still-airborne pieces are destroyed
+  // before they can land their hits.
+  const active = (G.catPieces && G.catPieces.length) ? G.catPieces : [G.cat];
+  const maxSpeed = active.reduce((m, p) => Math.max(m, Vector.magnitude(p.velocity)), 0);
+  const allOff = active.every((p) =>
+    p.position.y > H + 150 || p.position.x > W + 200 || p.position.x < -200);
+  G.stillMs = maxSpeed < 0.45 ? G.stillMs + dt : 0;
   G.flyingMs += dt;
-  // Settle when the cat rests for a while, leaves the arena, or hits the
-  // hard time limit (guarantees the next cat always loads). Time-based so the
-  // feel is identical across refresh rates.
-  if (G.stillMs > 750 || offscreen || G.flyingMs > 6000) {
+  // Settle when all projectiles rest, all leave the arena, or the hard time
+  // limit hits (guarantees the next cat always loads). Time-based for refresh
+  // independence.
+  if (G.stillMs > 750 || allOff || G.flyingMs > 6000) {
     G.state = "between";
     G.settleMs = 350;
   }
