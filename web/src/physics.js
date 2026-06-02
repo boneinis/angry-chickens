@@ -2,6 +2,7 @@
 import { G } from "./state.js";
 import {
   W, H, GROUND_H, GROUND_TOP, SLING, CAT_R, CHICK_R, GRAVITY_SCALE, CAT_CATEGORY,
+  MATERIALS, DEFAULT_MATERIAL, BLOCK_BASE_HP,
 } from "./config.js";
 
 const Matter = window.Matter;
@@ -30,14 +31,20 @@ Composite.add(world, [ground, ...walls]);
 
 // ---- Body factories -------------------------------------------------------
 export function makeBlock(b) {
+  const matName = MATERIALS[b.material] ? b.material : DEFAULT_MATERIAL;
+  const mat = MATERIALS[matName];
+  const maxHp = BLOCK_BASE_HP * mat.strength;
   const body = Bodies.rectangle(b.x, b.y, b.w, b.h, {
     friction: 0.6,
     frictionStatic: 0.8,
     restitution: 0.02,
-    density: 0.0016,
+    density: mat.density,
     chamfer: { radius: 3 },
     collisionFilter: { category: CAT_CATEGORY.block },
     gameType: "block",
+    gameMaterial: matName,
+    gameMaxHp: maxHp,
+    gameHp: maxHp,
     gameW: b.w,
     gameH: b.h,
   });

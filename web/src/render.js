@@ -2,6 +2,7 @@
 import { G } from "./state.js";
 import {
   W, H, GROUND_H, GROUND_TOP, SLING, FORK_BASE_Y, LAUNCH_FACTOR, FIXED_DT, CAT_R, CHICK_R,
+  MATERIALS,
 } from "./config.js";
 import { engine } from "./physics.js";
 
@@ -116,19 +117,48 @@ function drawBlock(b) {
   ctx.translate(b.position.x, b.position.y);
   ctx.rotate(b.angle);
   const w = b.gameW, h = b.gameH;
-  ctx.fillStyle = "#b5793b";
-  ctx.strokeStyle = "#8a5524";
+  const mat = MATERIALS[b.gameMaterial] || MATERIALS.wood;
+  ctx.fillStyle = mat.color;
+  ctx.strokeStyle = mat.stroke;
   ctx.lineWidth = 3;
   roundRect(-w / 2, -h / 2, w, h, 4);
   ctx.fill();
   ctx.stroke();
-  // wood grain
-  ctx.strokeStyle = "rgba(138,85,36,0.5)";
+  // surface grain / texture line
+  ctx.strokeStyle = "rgba(0,0,0,0.18)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(-w / 2 + 6, 0);
   ctx.lineTo(w / 2 - 6, 0);
   ctx.stroke();
+
+  // Progressive cracks as the block loses hit points.
+  const frac = (b.gameMaxHp && b.gameHp != null) ? b.gameHp / b.gameMaxHp : 1;
+  if (frac < 0.66) drawCracks(w, h, frac < 0.33 ? 5 : 2);
+  ctx.restore();
+}
+
+// Draw a small set of deterministic jagged crack lines clipped to the block.
+function drawCracks(w, h, count) {
+  ctx.save();
+  roundRect(-w / 2, -h / 2, w, h, 4);
+  ctx.clip();
+  ctx.strokeStyle = "rgba(20,20,20,0.55)";
+  ctx.lineWidth = 1.5;
+  // Deterministic pseudo-random offsets keyed off block size so cracks are
+  // stable per block and don't flicker frame to frame.
+  const seed = (w * 31 + h * 17);
+  for (let i = 0; i < count; i++) {
+    const r1 = ((seed * (i + 1) * 9301 + 49297) % 233280) / 233280;
+    const r2 = ((seed * (i + 3) * 4096 + 7919) % 233280) / 233280;
+    const sx = (-0.5 + r1) * w;
+    const sy = (-0.5 + r2) * h;
+    ctx.beginPath();
+    ctx.moveTo(sx, -h / 2);
+    ctx.lineTo(sx + (r2 - 0.5) * w * 0.5, sy);
+    ctx.lineTo(sx + (r1 - 0.5) * w * 0.4, h / 2);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 

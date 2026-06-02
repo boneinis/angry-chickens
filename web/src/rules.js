@@ -2,12 +2,13 @@
 import { G } from "./state.js";
 import {
   W, H, SLING, MAX_STRETCH, LAUNCH_FACTOR, CATS_PER_LEVEL, CAT_BONUS,
+  MATERIALS, BLOCK_POINTS, DAMAGE_THRESHOLD, DAMAGE_SCALE,
 } from "./config.js";
 import { LEVELS } from "./levels.js";
 import {
   engine, world, makeBlock, makeChicken, makeCat, clearBodies,
 } from "./physics.js";
-import { sndLaunch, sndHit, sndThud } from "./audio.js";
+import { sndLaunch, sndHit, sndThud, sndBreak } from "./audio.js";
 import { updateHUD, showResults, showGameOver, showMenu, showLevelSelect } from "./ui.js";
 import { recordResult, getBest } from "./save.js";
 
@@ -53,7 +54,8 @@ export function loadLevel(idx) {
   lvl.blocks.forEach(makeBlock);
   lvl.chickens.forEach(makeChicken);
 
-  G.remainingCats = CATS_PER_LEVEL;
+  // Honor each level's cat queue length; fall back to the default.
+  G.remainingCats = (lvl.cats && lvl.cats.length) || CATS_PER_LEVEL;
   prepareCat();
   G.state = "ready";
   updateHUD();
@@ -140,6 +142,10 @@ Events.on(engine, "collisionStart", (evt) => {
     const b = pair.bodyB;
     const rel = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
 
+    // Block damage is independent of (and runs before) the chicken logic so a
+    // destroyed block can still crush a chicken on the same impact.
+    applyBlockDamage(a, b, rel);
+
     const chicken = pickType(a, b, "chicken");
     if (chicken && chicken.alive) {
       const byCat = a.gameType === "cat" || b.gameType === "cat";
@@ -159,6 +165,38 @@ Events.on(engine, "collisionStart", (evt) => {
     if (rel > 11 && (a.gameType === "block" || b.gameType === "block")) sndThud();
   }
 });
+
+// Apply impact damage to any block(s) in a collision pair. Gentle resting /
+// settling contacts (rel <= DAMAGE_THRESHOLD) deal no damage at all.
+function applyBlockDamage(a, b, rel) {
+  if (rel <= DAMAGE_THRESHOLD) return;
+  damageIfBlock(a, b, rel);
+  damageIfBlock(b, a, rel);
+}
+
+function damageIfBlock(block, other, rel) {
+  if (block.gameType !== "block" || block.gameHp == null) return;
+  // Heavier strikers (cat/stone) hit harder; clamp the mass factor so it can
+  // neither trivialize nor over-amplify damage.
+  const otherMass = (other && other.mass && isFinite(other.mass)) ? other.mass : 1;
+  const massFactor = Math.max(0.6, Math.min(2.2, otherMass / 1.2));
+  const dmg = (rel - DAMAGE_THRESHOLD) * DAMAGE_SCALE * massFactor;
+  block.gameHp -= dmg;
+  if (block.gameHp <= 0) destroyBlock(block);
+}
+
+function destroyBlock(block) {
+  const i = G.blocks.indexOf(block);
+  if (i === -1) return;                 // already destroyed
+  G.blocks.splice(i, 1);
+  const mat = MATERIALS[block.gameMaterial] || MATERIALS.wood;
+  spawnDebris(block.position.x, block.position.y, mat.color);
+  Composite.remove(world, block);
+  sndBreak();
+  G.score += BLOCK_POINTS;
+  G.popups.push({ x: block.position.x, y: block.position.y, text: "+" + BLOCK_POINTS, life: 60 });
+  updateHUD();
+}
 
 function pickType(a, b, type) {
   if (a.gameType === type) return a;
@@ -194,6 +232,22 @@ export function spawnFeathers(x, y) {
       r: 3 + Math.random() * 4,
       life: 40 + Math.random() * 25,
       color: Math.random() < 0.5 ? "#fff" : "#ffd23f",
+    });
+  }
+}
+
+// Material-colored shards flung out when a block shatters.
+export function spawnDebris(x, y, color) {
+  for (let i = 0; i < 14; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const spd = 2 + Math.random() * 5;
+    G.particles.push({
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd - 2,
+      r: 2 + Math.random() * 4,
+      life: 35 + Math.random() * 25,
+      color,
     });
   }
 }
@@ -235,10 +289,23 @@ export function cullChickens() {
   }
 }
 
+// Remove blocks that fall off-screen so the body count can't grow unbounded.
+// Mirrors the chicken cull bounds; off-screen blocks award no points.
+export function cullBlocks() {
+  for (let i = G.blocks.length - 1; i >= 0; i--) {
+    const b = G.blocks[i];
+    if (b.position.y > H + 100 || b.position.x < -100 || b.position.x > W + 100) {
+      G.blocks.splice(i, 1);
+      Composite.remove(world, b);
+    }
+  }
+}
+
 // Game logic advanced once per fixed physics step (dt in ms).
 export function stepSim(dt) {
   checkFlying(dt);
   cullChickens();
+  cullBlocks();
   updateEffects();
   if (G.state === "between" && G.settleMs >= 0) {
     G.settleMs -= dt;
