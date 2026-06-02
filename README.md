@@ -28,14 +28,16 @@ out before the coop is clear and it's game over.
 
 - Direct cat-to-chicken hit: **100 points**
 - Chicken crushed by falling debris or knocked off the screen: **50 points**
+- **Cats-left bonus:** +1000 per unused cat when you clear a level
+- **Stars:** each level awards 1–3 stars based on your score
 
-### Levels
+### Progression
 
-1. **Tutorial** — a single exposed chicken. Get a feel for the slingshot.
-2. **The Coop** — two chickens: one in the open and one perched on a
-   knock-down stack.
-3. **Twin Towers** — three chickens: one on each of two towers (topple them or
-   pick the chickens off) plus one on a center platform.
+- **12 levels** with a difficulty curve, played from a **Level Select** screen.
+- **Stars and best scores are saved** in your browser (`localStorage`) and shown
+  on each level tile; clearing a level unlocks the next.
+- Jump straight to a level with `?level=N` (1-based), e.g. `index.html?level=5`.
+- The **☰** button (top-right) opens Level Select and pauses the game.
 
 ## Tech
 

@@ -16,16 +16,14 @@
       <div class="hud-pill" id="level-pill">Level 1</div>
       <div class="hud-pill" id="cats-pill">🐱 × 3</div>
       <div class="hud-pill" id="score-pill">Score: 0</div>
+      <button id="levels-btn" class="hud-pill" title="Level select">☰</button>
       <button id="mute-btn" class="hud-pill" title="Toggle sound">🔊</button>
     </div>
 
-    <!-- Center message / restart overlay -->
+    <!-- Center overlay: title menu, results, game over, and level select.
+         Contents are rendered by ui.js. -->
     <div id="overlay" class="hidden">
-      <div id="overlay-card">
-        <h1 id="overlay-title">Angry Chickens</h1>
-        <p id="overlay-text">Drag the cat back and let go to launch!</p>
-        <button id="overlay-btn">Play</button>
-      </div>
+      <div id="overlay-card"></div>
     </div>
 
     <div id="hint">Drag the cat back &amp; release to fling</div>

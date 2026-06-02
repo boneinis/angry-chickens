@@ -1,17 +1,45 @@
 // ---- Game rules -----------------------------------------------------------
 import { G } from "./state.js";
 import {
-  W, H, SLING, MAX_STRETCH, LAUNCH_FACTOR, CATS_PER_LEVEL,
+  W, H, SLING, MAX_STRETCH, LAUNCH_FACTOR, CATS_PER_LEVEL, CAT_BONUS,
 } from "./config.js";
 import { LEVELS } from "./levels.js";
 import {
   engine, world, makeBlock, makeChicken, makeCat, clearBodies,
 } from "./physics.js";
 import { sndLaunch, sndHit, sndThud } from "./audio.js";
-import { updateHUD, showOverlay } from "./ui.js";
+import { updateHUD, showResults, showGameOver, showMenu, showLevelSelect } from "./ui.js";
+import { recordResult, getBest } from "./save.js";
 
 const Matter = window.Matter;
 const { Composite, Body, Events, Vector } = Matter;
+
+// ---- Screen flow ----------------------------------------------------------
+// Start a fresh attempt at a level (per-level scoring: score resets each level).
+export function startLevel(idx) {
+  G.started = true;
+  G.levelIndex = idx;
+  G.score = 0;
+  G.levelStartScore = 0;
+  loadLevel(idx);
+}
+
+export function openMenu() {
+  G.started = false;
+  showMenu({ onPlay: () => startLevel(0), onLevels: openLevelSelect });
+}
+
+export function openLevelSelect() {
+  G.started = false;                       // pause physics while choosing
+  showLevelSelect({ onSelect: startLevel, onBack: openMenu });
+}
+
+function computeStars(score, thresholds) {
+  if (!thresholds || !thresholds.length) return 1;
+  let n = 0;
+  for (const t of thresholds) if (score >= t) n++;
+  return Math.max(1, Math.min(3, n));        // clearing always earns >= 1 star
+}
 
 // ---- Level management -----------------------------------------------------
 export function loadLevel(idx) {
@@ -75,29 +103,33 @@ export function checkEndOfRound() {
 
 export function winLevel() {
   if (G.state === "win" || G.state === "levelcomplete" || G.state === "gameover") return;
-  G.state = "levelcomplete";
-  if (G.levelIndex + 1 >= LEVELS.length) {
-    G.state = "win";
-    showOverlay("You Win! 🏆", `Final score: ${G.score}`, "Play Again", () => {
-      G.levelIndex = 0;
-      G.score = 0;
-      G.levelStartScore = 0;
-      loadLevel(G.levelIndex);
-    });
-  } else {
-    showOverlay("Level Complete! ⭐", `Score: ${G.score}`, "Next Level", () => {
-      G.levelIndex += 1;
-      G.levelStartScore = G.score;     // cumulative score carries into the next level
-      loadLevel(G.levelIndex);
-    });
-  }
+  const idx = G.levelIndex;
+  const isLast = idx + 1 >= LEVELS.length;
+  G.state = isLast ? "win" : "levelcomplete";
+
+  const base = G.score;                              // points from chickens this level
+  const bonus = G.remainingCats * CAT_BONUS;         // leftover-cat bonus
+  G.score += bonus;
+  const total = G.score;
+  const stars = computeStars(total, LEVELS[idx].stars);
+  recordResult(idx, total, stars);                   // persist best score/stars + unlock next
+  updateHUD();
+
+  showResults({
+    won: true, isLast, base, bonus, total, stars,
+    best: getBest(idx),
+    onNext: isLast ? null : () => startLevel(idx + 1),
+    onReplay: () => startLevel(idx),
+    onLevels: openLevelSelect,
+  });
 }
 
 export function gameOver() {
   G.state = "gameover";
-  showOverlay("Out of Cats! 😿", `Score: ${G.score}`, "Try Again", () => {
-    G.score = G.levelStartScore;       // roll back points earned in the failed attempt
-    loadLevel(G.levelIndex);
+  showGameOver({
+    score: G.score,
+    onRetry: () => startLevel(G.levelIndex),
+    onLevels: openLevelSelect,
   });
 }
 

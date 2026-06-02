@@ -12,6 +12,7 @@ export const GRAVITY_SCALE = 0.0022;              // tuned so shots arc within t
 export const CAT_R = 26;
 export const CHICK_R = 28;
 export const CATS_PER_LEVEL = 3;
+export const CAT_BONUS = 1000;                     // points per unused cat on clear
 export const FIXED_DT = 1000 / 60;                // fixed physics timestep (ms)
 export const MAX_SUBSTEPS = 5;                     // cap steps/frame to avoid spiral
 
