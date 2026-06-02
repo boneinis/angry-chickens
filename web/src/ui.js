@@ -36,7 +36,9 @@ function openOverlay(html) {
 function wire(action, cb) {
   if (!cb) return;
   const el = card.querySelector(`[data-action="${action}"]`);
-  if (el) el.onclick = () => { unlockAudio(); closeOverlay(); cb(); };
+  // Null the handler on first activation so a fast double-click can't fire the
+  // navigation callback twice (e.g. starting a level twice).
+  if (el) el.onclick = () => { el.onclick = null; unlockAudio(); closeOverlay(); cb(); };
 }
 
 function starsHTML(n, total = 3, animate = false) {
@@ -182,7 +184,7 @@ export function showLevelSelect({ onSelect, onBack, onResume }) {
       <button class="btn secondary" data-action="back">Back</button>
     </div>`);
   card.querySelectorAll(".lvl-tile:not(:disabled)").forEach((el) => {
-    el.onclick = () => { unlockAudio(); closeOverlay(); onSelect(parseInt(el.dataset.idx, 10)); };
+    el.onclick = () => { el.onclick = null; unlockAudio(); closeOverlay(); onSelect(parseInt(el.dataset.idx, 10)); };
   });
   wire("resume", onResume);
   wire("back", onBack);

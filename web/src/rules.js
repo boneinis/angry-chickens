@@ -168,6 +168,7 @@ export function winLevel() {
   const total = G.score;
   const stars = computeStars(total, LEVELS[idx].stars);
   recordResult(idx, total, stars);                   // persist best score/stars + unlock next
+  G.started = false;                                 // freeze physics behind the results overlay
   updateHUD();
 
   showResults({
@@ -181,6 +182,7 @@ export function winLevel() {
 
 export function gameOver() {
   G.state = "gameover";
+  G.started = false;                 // freeze physics behind the results overlay
   showGameOver({
     score: G.score,
     onRetry: () => startLevel(G.levelIndex),

@@ -60,14 +60,11 @@ function updateCamera() {
   const home = homeView();
 
   if (G.state === "ready" || G.state === "aiming") {
-    // Snap-ease home; once close enough, lock to exact home for accuracy.
-    cam.x = lerp(cam.x, home.x, CAM_HOME_EASE);
-    cam.y = lerp(cam.y, home.y, CAM_HOME_EASE);
-    cam.zoom = lerp(cam.zoom, home.zoom, CAM_HOME_EASE);
-    if (Math.abs(cam.x - home.x) < 0.6 && Math.abs(cam.y - home.y) < 0.6 &&
-        Math.abs(cam.zoom - home.zoom) < 0.004) {
-      cam.x = home.x; cam.y = home.y; cam.zoom = home.zoom;
-    }
+    // Aiming must be pixel-accurate, so the camera is locked to the exact home
+    // view with no shake — input.toWorld then maps 1:1. (The smooth ease toward
+    // home happens during the preceding "between" state.)
+    cam.x = home.x; cam.y = home.y; cam.zoom = home.zoom;
+    cam.shakeT = 0;
     cam.introT = 0;
   } else if (G.state === "flying" || G.state === "between") {
     const body = followBody();

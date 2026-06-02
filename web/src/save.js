@@ -58,10 +58,15 @@ export function recordResult(levelIndex, score, stars) {
   return p;
 }
 
-// Best score/stars recorded for a level, or zeros if never played.
+// Best score/stars recorded for a level, or zeros if never played. Stars are
+// clamped to a valid 0..3 integer so corrupt/hand-edited storage can't crash
+// callers that do `"★".repeat(stars)` (RangeError on negatives).
 export function getBest(levelIndex) {
   const b = loadProgress().best[levelIndex];
-  return b ? { score: b.score || 0, stars: b.stars || 0 } : { score: 0, stars: 0 };
+  if (!b) return { score: 0, stars: 0 };
+  const score = Math.max(0, Math.floor(Number(b.score)) || 0);
+  const stars = Math.max(0, Math.min(3, Math.floor(Number(b.stars)) || 0));
+  return { score, stars };
 }
 
 // Highest unlocked level index (0 means only level 0 is playable).
