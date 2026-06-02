@@ -46,31 +46,29 @@
     {
       name: "The Coop",
       blocks: [
-        // open platform with an exposed chicken
-        { x: 720, y: 600, w: 140, h: 20 },
-        // a crated chicken: knock the structure to defeat it
-        { x: 1010, y: 600, w: 160, h: 20 },
-        { x: 945, y: 530, w: 20, h: 120 },
-        { x: 1075, y: 530, w: 20, h: 120 },
-        { x: 1010, y: 460, w: 160, h: 20 },
+        // exposed chicken on a low platform
+        { x: 700, y: 600, w: 140, h: 20 },
+        // second chicken perched on a short, knock-down stack (open — not caged)
+        { x: 1000, y: 600, w: 140, h: 20 },
+        { x: 1000, y: 580, w: 140, h: 20 },
       ],
-      chickens: [{ x: 720, y: 562 }, { x: 1010, y: 562 }],
+      chickens: [{ x: 700, y: 562 }, { x: 1000, y: 542 }],
     },
     {
       name: "Twin Towers",
       blocks: [
-        // left tower
-        { x: 790, y: 530, w: 20, h: 120 },
-        { x: 870, y: 530, w: 20, h: 120 },
-        { x: 830, y: 460, w: 120, h: 20 },
+        // left tower: two posts + a platform, chicken perched on top (open)
+        { x: 790, y: 560, w: 20, h: 80 },
+        { x: 850, y: 560, w: 20, h: 80 },
+        { x: 820, y: 510, w: 100, h: 20 },
         // right tower
-        { x: 1090, y: 530, w: 20, h: 120 },
-        { x: 1170, y: 530, w: 20, h: 120 },
-        { x: 1130, y: 460, w: 120, h: 20 },
-        // middle platform
-        { x: 980, y: 600, w: 160, h: 20 },
+        { x: 1110, y: 560, w: 20, h: 80 },
+        { x: 1170, y: 560, w: 20, h: 80 },
+        { x: 1140, y: 510, w: 100, h: 20 },
+        // middle platform with an exposed chicken
+        { x: 965, y: 600, w: 140, h: 20 },
       ],
-      chickens: [{ x: 830, y: 432 }, { x: 1130, y: 432 }, { x: 980, y: 562 }],
+      chickens: [{ x: 820, y: 472 }, { x: 1140, y: 472 }, { x: 965, y: 562 }],
     },
   ];
 

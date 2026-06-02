@@ -32,9 +32,10 @@ out before the coop is clear and it's game over.
 ### Levels
 
 1. **Tutorial** — a single exposed chicken. Get a feel for the slingshot.
-2. **The Coop** — one chicken in the open and one boxed inside a crate you
-   have to topple.
-3. **Twin Towers** — three chickens across two towers and a center platform.
+2. **The Coop** — two chickens: one in the open and one perched on a
+   knock-down stack.
+3. **Twin Towers** — three chickens: one on each of two towers (topple them or
+   pick the chickens off) plus one on a center platform.
 
 ## Tech
 
