@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Angry Chickens</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-wrap">
+    <canvas id="game"></canvas>
+
+    <!-- Heads-up display drawn as crisp HTML over the canvas -->
+    <div id="hud">
+      <div class="hud-pill" id="level-pill">Level 1</div>
+      <div class="hud-pill" id="cats-pill">🐱 × 3</div>
+      <div class="hud-pill" id="score-pill">Score: 0</div>
+      <button id="mute-btn" class="hud-pill" title="Toggle sound">🔊</button>
+    </div>
+
+    <!-- Center message / restart overlay -->
+    <div id="overlay" class="hidden">
+      <div id="overlay-card">
+        <h1 id="overlay-title">Angry Chickens</h1>
+        <p id="overlay-text">Drag the cat back and let go to launch!</p>
+        <button id="overlay-btn">Play</button>
+      </div>
+    </div>
+
+    <div id="hint">Drag the cat back &amp; release to fling</div>
+  </div>
+
+  <script src="vendor/matter.min.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
